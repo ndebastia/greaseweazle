@@ -16,6 +16,23 @@ from greaseweazle import optimised
 
 EARLIEST_SUPPORTED_FIRMWARE = (0, 31)
 
+GWRP_MAGIC = 0x4757455a
+GWRP_DATA_FLAG_LAST = 0x01
+
+
+class PaulaHybridFlux(Flux):
+
+    def __init__(self, track_bytes: bytes, sample_freq: float) -> None:
+        # The MCU already decoded one full Amiga DD track image.
+        # Give the host a sane nominal revolution so existing callers that
+        # look at time-per-rev do not crash on a missing index-derived value.
+        super().__init__([sample_freq * 0.2], [], sample_freq, index_cued=True)
+        self.paula_track_bytes = track_bytes
+
+    def summary_string(self) -> str:
+        return ("Paula Decoded (%u bytes)"
+                % len(self.paula_track_bytes))
+
 ## Control-Path command set
 class ControlCmd:
     ClearComms      = 10000
@@ -446,12 +463,45 @@ Track0 signal %s after seek to cylinder %d
 
     ## _read_track:
     ## Private helper which issues command requests to Greaseweazle.
-    def _read_track(self, revs, ticks) -> bytes:
+    def _read_track(self, revs, ticks) -> Union[bytes, PaulaHybridFlux]:
 
-        # Request and read all flux timings for this track.
-        dat = bytearray()
+        # Request and read either classic flux timings or a hybrid Paula track.
         self._send_cmd(struct.pack("<2BIH", Cmd.ReadFlux, 8,
                                    ticks, 0 if revs==0 else revs+1))
+
+        first4 = self.ser.read(4)
+        error.check(len(first4) == 4, 'Short read on CMD_READ_FLUX response')
+
+        # Hybrid path: firmware streams GWRP-style DATA chunks whose payloads
+        # are already Paula-decoded 512-byte sectors.
+        if struct.unpack('<I', first4)[0] == GWRP_MAGIC:
+            track = bytearray()
+            while True:
+                hdr_rest = self.ser.read(12)
+                error.check(len(hdr_rest) == 12,
+                            'Short read on Paula DATA header')
+                hdr = first4 + hdr_rest
+                magic, seq, chunk_idx, plen, flags, reserved = \
+                    struct.unpack('<IIIHBB', hdr)
+                error.check(magic == GWRP_MAGIC,
+                            'Bad Paula DATA magic %08x' % magic)
+                if plen:
+                    payload = self.ser.read(plen)
+                    error.check(len(payload) == plen,
+                                'Short read on Paula DATA payload')
+                    track += payload
+                if flags & GWRP_DATA_FLAG_LAST:
+                    break
+                first4 = self.ser.read(4)
+                error.check(len(first4) == 4,
+                            'Short read on next Paula DATA magic')
+
+            # Check terminal status using the classic status query.
+            self._send_cmd(struct.pack("2B", Cmd.GetFluxStatus, 2))
+            return PaulaHybridFlux(bytes(track), self.sample_freq)
+
+        # Classic path: the firmware returns flux opcodes terminated by 0.
+        dat = bytearray(first4)
         while True:
             dat += self.ser.read(1)
             dat += self.ser.read(self.ser.in_waiting)
@@ -481,6 +531,9 @@ Track0 signal %s after seek to cylinder %d
             else:
                 # Success!
                 break
+
+        if isinstance(dat, PaulaHybridFlux):
+            return dat
 
         try:
             # Decode the flux list and read the index-times list.

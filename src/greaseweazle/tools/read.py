@@ -43,6 +43,8 @@ def read_and_normalise(usb: USB.Unit, args, revs: int, ticks=0) -> Flux:
     else:
         flux = usb.read_track(revs=revs, ticks=ticks)
     flux._ticks_per_rev = args.drive_ticks_per_rev
+    if isinstance(flux, USB.PaulaHybridFlux):
+        return flux
     if args.reverse:
         flux.reverse()
     if args.hard_sectors and not args.raw:
@@ -69,6 +71,18 @@ def read_with_retry(usb: USB.Unit, args, t) -> Tuple[Flux, Optional[HasFlux]]:
     if args.fmt_cls is None:
         print(f'{tspec}: {flux.summary_string()}')
         return flux, flux
+
+    if isinstance(flux, USB.PaulaHybridFlux):
+        dat = args.fmt_cls.mk_track(cyl, head)
+        if dat is None:
+            print("%s: WARNING: No codec track available for Paula decoded data"
+                  % tspec)
+            return flux, None
+        dat.set_img_track(flux.paula_track_bytes)
+        print("%s: %s from %s" % (tspec,
+                                   dat.summary_string(),
+                                   flux.summary_string()))
+        return flux, dat
 
     dat = args.fmt_cls.decode_flux(cyl, head, flux)
     if dat is None:

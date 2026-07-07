@@ -265,7 +265,13 @@ class Flux:
                 index_list = index_list[1:]
             ticks_per_rev = sum(index_list) / len(index_list)
         except:
-            ticks_per_rev = self._ticks_per_rev
+            ticks_per_rev = getattr(self, '_ticks_per_rev', None)
+            if ticks_per_rev is None:
+                # No index pulses were captured and no rev time was supplied.
+                # Fall back to the nominal Amiga/PC 300 RPM (0.2 s/rev) so the
+                # sync-based sector decode can still proceed instead of raising
+                # AttributeError. Pass --fake-index to override explicitly.
+                ticks_per_rev = self.sample_freq * 0.2
         return ticks_per_rev
 
 
