@@ -102,6 +102,7 @@ enum {
     GW_USB_REALTIME_FRAME_ACK = 2
 };
 
+#define BUS_IBMPC  1u
 #define BUS_SHUGART 2u
 #define GWRP_DATA_FLAG_LAST 0x01u
 #define RT_READ_FLAG_RAW_FLUX 0x01u
@@ -302,7 +303,10 @@ int main(int argc, char **argv)
     uint8_t flags;
     uint8_t seq = 2u;
     uint8_t unit = env_u8_default("GW_RT_UNIT", 0u);
-    uint8_t bus_type = env_u8_default("GW_RT_BUS_TYPE", BUS_SHUGART);
+    /* Default aligned with the production path (MFC_GW_BUS_TYPE=ibmpc,
+     * hps_client/src/mfc_backend_greaseweazle.c): the bench drive is
+     * IBM-PC wired. Override with GW_RT_BUS_TYPE=2 for Shugart. */
+    uint8_t bus_type = env_u8_default("GW_RT_BUS_TYPE", BUS_IBMPC);
     int do_seek;
     uint64_t start_ms = 0u;
     uint64_t first_data_ms = 0u;
